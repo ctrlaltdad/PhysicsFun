@@ -1,5 +1,5 @@
 import { canvas, ctx } from "./canvasContext.js";
-import { PIXELS_PER_METER } from "./constants.js";
+import { PIXELS_PER_METER, METERS_PER_SECOND_TO_MPH, METERS_TO_FEET } from "./constants.js";
 import { landscapes } from "./landscapes.js";
 import { players } from "./players.js";
 import { drawCrashFragments, drawCrashIndicator } from "./crashEffects.js";
@@ -14,6 +14,7 @@ export function renderScene(state, player) {
   drawShadow(state, player, landscape);
   drawPlayer(player, state);
   drawCrashFragments(ctx);
+  drawVectorsOverlay(state, player);
   drawCrashIndicator(ctx, player, state);
 }
 
@@ -184,4 +185,307 @@ function shadeColor(hex, percent) {
   const g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + amount));
   const b = Math.min(255, Math.max(0, (num & 0xff) + amount));
   return `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
+}
+
+function drawVectorsOverlay(state, player) {
+  if (!state.showVectors) {
+    return;
+  }
+
+  const vectorSource = player.crashed && state.crashVectorSnapshot
+    ? state.crashVectorSnapshot
+    : {
+        vx: player.vx,
+        vy: player.vy,
+        appliedForceX: state.lastAppliedForceX,
+        dragForceX: state.dragForceX,
+        frictionForceX: state.frictionForceX,
+        netForceX: state.lastForceX
+      };
+
+  const originX = player.x;
+  const originY = player.y;
+
+  const velocityScale = 0.02;
+  const velocityVector = scaleAndClampVector(vectorSource.vx, vectorSource.vy, velocityScale, 140);
+
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.globalAlpha = 0.85;
+
+  if (Math.hypot(velocityVector.vx, velocityVector.vy) > 1) {
+    drawArrow(originX, originY, originX + velocityVector.vx, originY + velocityVector.vy, "#4cc9f0");
+    drawVectorLabel(originX + velocityVector.vx, originY + velocityVector.vy, "v", "#4cc9f0");
+  }
+
+  const baseY = originY + player.height * 0.45;
+  const forceScale = 0.02;
+  const maxForceLength = 120;
+
+  const forces = [
+    {
+      value: vectorSource.appliedForceX,
+      color: "#80ed99",
+      label: "F_input",
+      offset: -18
+    },
+    {
+      value: vectorSource.dragForceX,
+      color: "#ff6b6b",
+      label: "F_drag",
+      offset: 0
+    },
+    {
+      value: vectorSource.frictionForceX,
+      color: "#f9c74f",
+      label: "F_friction",
+      offset: 18
+    },
+    {
+      value: vectorSource.netForceX,
+      color: "#f1f2f6",
+      label: "F_net",
+      offset: 36
+    }
+  ];
+
+  forces.forEach((force) => {
+    if (!Number.isFinite(force.value) || Math.abs(force.value) < 1) {
+      return;
+    }
+    const length = clamp(force.value * forceScale, -maxForceLength, maxForceLength);
+    if (Math.abs(length) < 2) {
+      return;
+    }
+    const startY = baseY + force.offset;
+    drawArrow(originX, startY, originX + length, startY, force.color);
+    drawVectorLabel(originX + length, startY, force.label, force.color);
+  });
+
+  const legendBox = drawVectorsLegend();
+  if (player.crashed && state.crashDiagnostics) {
+    drawCrashDiagnostics(state, legendBox);
+  }
+  ctx.restore();
+}
+
+function drawVectorsLegend() {
+  const legendItems = [
+    { label: "Velocity", color: "#4cc9f0" },
+    { label: "Input", color: "#80ed99" },
+    { label: "Drag", color: "#ff6b6b" },
+    { label: "Friction", color: "#f9c74f" },
+    { label: "Net", color: "#f1f2f6" }
+  ];
+
+  const padding = 10;
+  const boxWidth = 150;
+  const lineHeight = 18;
+  const boxHeight = padding * 2 + legendItems.length * lineHeight;
+
+  const x = canvas.width - boxWidth - 20;
+  const y = 20;
+
+  ctx.save();
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = "rgba(10, 18, 30, 0.65)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y);
+  ctx.lineTo(x + boxWidth - 10, y);
+  ctx.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + 10);
+  ctx.lineTo(x + boxWidth, y + boxHeight - 10);
+  ctx.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - 10, y + boxHeight);
+  ctx.lineTo(x + 10, y + boxHeight);
+  ctx.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - 10);
+  ctx.lineTo(x, y + 10);
+  ctx.quadraticCurveTo(x, y, x + 10, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.font = "12px 'Segoe UI', sans-serif";
+  ctx.textBaseline = "middle";
+
+  legendItems.forEach((item, index) => {
+    const lineY = y + padding + index * lineHeight + lineHeight / 2;
+    ctx.fillStyle = item.color;
+    ctx.fillRect(x + padding, lineY - 4, 12, 8);
+    ctx.fillStyle = "#dce0ec";
+    ctx.fillText(item.label, x + padding + 18, lineY);
+  });
+  ctx.restore();
+  return { x, y, width: boxWidth, height: boxHeight };
+}
+
+function drawCrashDiagnostics(state, legendBox) {
+  const diagnostics = state.crashDiagnostics;
+  if (!diagnostics) {
+    return;
+  }
+
+  const verticalImpactMph = metersPerSecondToMph(diagnostics.impactVelocity);
+  const horizontalImpactMph = metersPerSecondToMph(diagnostics.horizontalVelocity);
+  const totalImpactMph = metersPerSecondToMph(diagnostics.totalVelocity);
+  const dropFeet = metersToFeet(diagnostics.dropHeight);
+
+  const baseLines = [`Reason: ${diagnostics.reason ?? "Severe impact"}`];
+
+  if (diagnostics.narrative) {
+    const explanationText = stripNarrativeReason(diagnostics.narrative);
+    const narrativeLines = wrapText(explanationText, 56);
+    if (narrativeLines.length > 0) {
+      baseLines.push(`Explanation: ${narrativeLines[0]}`);
+      for (let i = 1; i < narrativeLines.length; i += 1) {
+        baseLines.push(`  ${narrativeLines[i]}`);
+      }
+    }
+  }
+
+  baseLines.push(
+    `Vertical impact: ${formatNumber(diagnostics.impactVelocity, 1)} m/s (${formatNumber(verticalImpactMph, 1)} mph)`,
+    `Horizontal speed: ${formatNumber(diagnostics.horizontalVelocity, 1)} m/s (${formatNumber(horizontalImpactMph, 1)} mph)`,
+    `Total speed: ${formatNumber(diagnostics.totalVelocity, 1)} m/s (${formatNumber(totalImpactMph, 1)} mph)`,
+    `Air time: ${formatNumber(diagnostics.airTime, 2)} s`,
+    `Drop height: ${formatNumber(diagnostics.dropHeight, 2)} m (${formatNumber(dropFeet, 2)} ft)`
+  );
+
+  const thresholdLines = (diagnostics.thresholds ?? []).map((entry) => `• ${entry}`);
+  const lines = baseLines.concat(thresholdLines);
+
+  const padding = 12;
+  const lineHeight = 18;
+  const boxWidth = Math.max(220, legendBox ? legendBox.width : 0);
+  const x = canvas.width - boxWidth - 20;
+  const y = legendBox ? legendBox.y + legendBox.height + 12 : 20;
+  const boxHeight = padding * 2 + lines.length * lineHeight;
+
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = "rgba(10, 18, 30, 0.7)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y);
+  ctx.lineTo(x + boxWidth - 10, y);
+  ctx.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + 10);
+  ctx.lineTo(x + boxWidth, y + boxHeight - 10);
+  ctx.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - 10, y + boxHeight);
+  ctx.lineTo(x + 10, y + boxHeight);
+  ctx.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - 10);
+  ctx.lineTo(x, y + 10);
+  ctx.quadraticCurveTo(x, y, x + 10, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.font = "12px 'Segoe UI', sans-serif";
+  ctx.fillStyle = "#f4f6fb";
+  ctx.textBaseline = "middle";
+  lines.forEach((text, index) => {
+    const lineY = y + padding + index * lineHeight + lineHeight / 2;
+    ctx.fillText(text, x + padding, lineY);
+  });
+  ctx.restore();
+}
+
+function formatNumber(value, decimals) {
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+  return value.toFixed(decimals);
+}
+
+function metersPerSecondToMph(value) {
+  return value * METERS_PER_SECOND_TO_MPH;
+}
+
+function metersToFeet(value) {
+  return value * METERS_TO_FEET;
+}
+
+function wrapText(text, maxChars) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return [];
+  }
+  const lines = [];
+  let currentLine = words[0];
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i];
+    if ((currentLine.length + 1 + word.length) <= maxChars) {
+      currentLine += ` ${word}`;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  lines.push(currentLine);
+  return lines;
+}
+
+function stripNarrativeReason(narrative) {
+  const text = String(narrative).trim();
+  if (text.includes(" — ")) {
+    return text.split(" — ").slice(1).join(" — ").trim();
+  }
+  return text;
+}
+
+function drawArrow(startX, startY, endX, endY, color) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  const angle = Math.atan2(endY - startY, endX - startX);
+  const headLength = 10;
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(
+    endX - headLength * Math.cos(angle - Math.PI / 6),
+    endY - headLength * Math.sin(angle - Math.PI / 6)
+  );
+  ctx.lineTo(
+    endX - headLength * Math.cos(angle + Math.PI / 6),
+    endY - headLength * Math.sin(angle + Math.PI / 6)
+  );
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawVectorLabel(x, y, text, color) {
+  ctx.save();
+  ctx.font = "12px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y - 6);
+  ctx.restore();
+}
+
+function scaleAndClampVector(vx, vy, scale, maxLength) {
+  if (!Number.isFinite(vx) || !Number.isFinite(vy)) {
+    return { vx: 0, vy: 0 };
+  }
+  const scaledX = vx * scale;
+  const scaledY = vy * scale;
+  const length = Math.hypot(scaledX, scaledY);
+  if (length <= maxLength) {
+    return { vx: scaledX, vy: scaledY };
+  }
+  const ratio = maxLength / length;
+  return {
+    vx: scaledX * ratio,
+    vy: scaledY * ratio
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }

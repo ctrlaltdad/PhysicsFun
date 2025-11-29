@@ -21,8 +21,12 @@ export const controls = {
   windValue: document.getElementById("windValue"),
   rainSlider: document.getElementById("rainSlider"),
   rainValue: document.getElementById("rainValue"),
+  vectorToggle: document.getElementById("vectorToggle"),
   heightReadout: document.getElementById("heightReadout"),
   forceReadout: document.getElementById("forceReadout"),
+  forceUnit: document.getElementById("forceUnit"),
+  forceSecondaryReadout: document.getElementById("forceSecondaryReadout"),
+  forceSecondaryUnit: document.getElementById("forceSecondaryUnit"),
   equations: document.getElementById("equations"),
   resetButton: document.getElementById("resetButton")
 };

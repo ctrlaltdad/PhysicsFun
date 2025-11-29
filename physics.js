@@ -1,6 +1,16 @@
-import { PIXELS_PER_METER, CAR_CRASH_THRESHOLD, physicsDefaults } from "./constants.js";
+import {
+  PIXELS_PER_METER,
+  CAR_CRASH_THRESHOLD,
+  METERS_PER_SECOND_TO_MPH,
+  METERS_TO_FEET,
+  physicsDefaults
+} from "./constants.js";
 import { canvas } from "./canvasContext.js";
 import { triggerCarCrash } from "./crashEffects.js";
+
+const RAD_TO_DEG = 180 / Math.PI;
+const SLOPE_CRASH_MIN_SPEED = 8; // m/s
+const SLOPE_CRASH_ANGLE_RAD = 55 * (Math.PI / 180);
 
 export function updatePhysics(state, player, config, landscape, dt) {
   player.ax = 0;
@@ -26,8 +36,11 @@ export function updatePhysics(state, player, config, landscape, dt) {
 
   clampVertical(player);
   const wasOnGround = player.onGround;
-  resolveGroundCollision(state, player, config, landscape, wasOnGround);
+  const airborneDuration = wasOnGround ? 0 : (player.airTime + dt);
+  resolveGroundCollision(state, player, config, landscape, wasOnGround, airborneDuration);
   applyGroundFriction(state, player, config, dt);
+
+  player.airTime = player.onGround ? 0 : airborneDuration;
 
   state.lastAppliedForceX = appliedForceX;
   state.lastForceX = appliedForceX + state.dragForceX + state.frictionForceX;
@@ -144,11 +157,67 @@ function clampVertical(player) {
   }
 }
 
-function resolveGroundCollision(state, player, config, landscape, wasOnGround) {
+function resolveGroundCollision(state, player, config, landscape, wasOnGround, airborneDuration) {
   const groundY = landscape.ground(state.worldX, state.sceneTime);
   const halfHeight = player.height / 2;
   if (player.y + halfHeight >= groundY) {
     player.y = groundY - halfHeight;
+
+    if (
+      state.playerType === "car" &&
+      !player.crashed &&
+      wasOnGround &&
+      Math.abs(player.vx) > 0.1
+    ) {
+      const direction = Math.sign(player.vx);
+      const probeDistancePixels = Math.max(player.width * 0.8, 40);
+      const sampleAheadX = state.worldX + direction * probeDistancePixels;
+      const groundAhead = landscape.ground(sampleAheadX, state.sceneTime);
+      const risePixels = groundAhead - groundY;
+      if (risePixels * direction > 0) {
+        const riseMeters = Math.abs(risePixels) / PIXELS_PER_METER;
+        const runMeters = probeDistancePixels / PIXELS_PER_METER;
+        const slopeAngle = Math.atan2(Math.abs(risePixels), probeDistancePixels);
+        const approachSpeed = Math.abs(player.vx) / PIXELS_PER_METER;
+        if (slopeAngle >= SLOPE_CRASH_ANGLE_RAD && approachSpeed >= SLOPE_CRASH_MIN_SPEED) {
+          const normalImpactVelocity = approachSpeed * Math.sin(slopeAngle);
+          const slopeAngleDeg = slopeAngle * RAD_TO_DEG;
+          const thresholds = [
+            formatSlopeAngleComparison(slopeAngleDeg, SLOPE_CRASH_ANGLE_RAD * RAD_TO_DEG, riseMeters, runMeters),
+            formatSpeedComparison("Approach speed", approachSpeed, SLOPE_CRASH_MIN_SPEED)
+          ];
+          const diagnostics = {
+            reason: "Impacted steep slope",
+            impactVelocity: normalImpactVelocity,
+            horizontalVelocity: approachSpeed,
+            totalVelocity: approachSpeed,
+            airTime: player.airTime,
+            dropHeight: 0,
+            thresholds,
+            effectiveFriction: state.effectiveGroundFriction,
+            windSpeed: state.weather?.windSpeed ?? 0,
+            surfaceSlickness: state.weather?.rainSlickness ?? 0,
+            narrative: buildCrashNarrative({
+              type: "slope",
+              slopeAngle,
+              approachSpeed,
+              normalImpactVelocity,
+              riseMeters,
+              runMeters,
+              effectiveFriction: state.effectiveGroundFriction,
+              windSpeed: state.weather?.windSpeed ?? 0,
+              surfaceSlickness: state.weather?.rainSlickness ?? 0
+            })
+          };
+          const crashSeverity = Math.max(normalImpactVelocity * 1.5, approachSpeed * 0.6);
+          triggerCarCrash(state, player, crashSeverity, diagnostics);
+          player.onGround = true;
+          player.airborneStartY = groundY;
+          return;
+        }
+      }
+    }
+
     if (player.vy > 0) {
       const impactVelocityMeters = Math.abs(player.vy) / PIXELS_PER_METER;
       const totalVelocityMeters = Math.sqrt(player.vx * player.vx + player.vy * player.vy) / PIXELS_PER_METER;
@@ -158,11 +227,77 @@ function resolveGroundCollision(state, player, config, landscape, wasOnGround) {
         state.playerType === "car" &&
         !player.crashed
       ) {
-        const severeVertical = impactVelocityMeters > CAR_CRASH_THRESHOLD;
-        const severeTotal = totalVelocityMeters > CAR_CRASH_THRESHOLD * 1.5 && impactVelocityMeters > 2;
-        if (severeVertical || severeTotal) {
+        const airborneSeconds = airborneDuration;
+        const dropHeightMeters = Math.max(0, (groundY - (player.airborneStartY ?? groundY)) / PIXELS_PER_METER);
+        const horizontalVelocityMeters = Math.abs(player.vx) / PIXELS_PER_METER;
+        const severeVertical = impactVelocityMeters > CAR_CRASH_THRESHOLD && airborneSeconds > 0.12;
+        const severeTotal = totalVelocityMeters > CAR_CRASH_THRESHOLD * 1.6 && impactVelocityMeters > 4 && airborneSeconds > 0.2;
+        const dropInduced = impactVelocityMeters > CAR_CRASH_THRESHOLD * 0.75 && dropHeightMeters > 1.2 && airborneSeconds > 0.25;
+        if (severeVertical || severeTotal || dropInduced) {
           const crashSeverity = Math.max(impactVelocityMeters, totalVelocityMeters * 0.35);
-          triggerCarCrash(state, player, crashSeverity);
+          const thresholds = [];
+          if (severeVertical) {
+            thresholds.push(
+              formatSpeedComparison(
+                "Vertical impact",
+                impactVelocityMeters,
+                CAR_CRASH_THRESHOLD
+              )
+            );
+          }
+          if (severeTotal) {
+            thresholds.push(
+              formatSpeedComparison(
+                "Combined speed",
+                totalVelocityMeters,
+                CAR_CRASH_THRESHOLD * 1.6
+              )
+            );
+          }
+          if (dropInduced) {
+            thresholds.push(
+              formatDropComparison(dropHeightMeters, impactVelocityMeters)
+            );
+          }
+          let reason = "Severe impact";
+          if (severeVertical) {
+            reason = "Hard vertical impact";
+          } else if (severeTotal) {
+            reason = "High-speed landing";
+          } else if (dropInduced) {
+            reason = "Large drop impact";
+          }
+          if (thresholds.length > 1) {
+            reason += " (multiple factors)";
+          }
+          const diagnostics = {
+            reason,
+            impactVelocity: impactVelocityMeters,
+            horizontalVelocity: horizontalVelocityMeters,
+            totalVelocity: totalVelocityMeters,
+            airTime: airborneSeconds,
+            dropHeight: dropHeightMeters,
+            thresholds,
+            effectiveFriction: state.effectiveGroundFriction,
+            windSpeed: state.weather?.windSpeed ?? 0,
+            surfaceSlickness: state.weather?.rainSlickness ?? 0,
+            narrative: buildCrashNarrative({
+              type: "landing",
+              reason,
+              impactVelocityMeters,
+              horizontalVelocityMeters,
+              totalVelocityMeters,
+              airborneSeconds,
+              dropHeightMeters,
+              effectiveFriction: state.effectiveGroundFriction,
+              windSpeed: state.weather?.windSpeed ?? 0,
+              surfaceSlickness: state.weather?.rainSlickness ?? 0,
+              severeVertical,
+              severeTotal,
+              dropInduced
+            })
+          };
+          triggerCarCrash(state, player, crashSeverity, diagnostics);
         }
       }
 
@@ -176,7 +311,112 @@ function resolveGroundCollision(state, player, config, landscape, wasOnGround) {
       }
     }
     player.onGround = true;
+    player.airborneStartY = groundY;
   } else {
     player.onGround = false;
+    if (wasOnGround) {
+      player.airborneStartY = groundY;
+    }
   }
+}
+
+function formatSpeedComparison(label, measured, threshold) {
+  const measuredMph = measured * METERS_PER_SECOND_TO_MPH;
+  const thresholdMph = threshold * METERS_PER_SECOND_TO_MPH;
+  return `${label} ${measured.toFixed(1)} m/s (${measuredMph.toFixed(1)} mph) > ${threshold.toFixed(1)} m/s (${thresholdMph.toFixed(1)} mph)`;
+}
+
+function formatDropComparison(dropMeters, impactMetersPerSecond) {
+  const dropFeet = dropMeters * METERS_TO_FEET;
+  const impactMph = impactMetersPerSecond * METERS_PER_SECOND_TO_MPH;
+  return `Drop ${dropMeters.toFixed(2)} m (${dropFeet.toFixed(2)} ft) with impact ${impactMetersPerSecond.toFixed(1)} m/s (${impactMph.toFixed(1)} mph)`;
+}
+
+function formatSlopeAngleComparison(angleDegrees, thresholdDegrees, riseMeters, runMeters) {
+  const riseFeet = riseMeters * METERS_TO_FEET;
+  return `Slope angle ${angleDegrees.toFixed(1)}° > ${thresholdDegrees.toFixed(1)}° (rise ${riseMeters.toFixed(2)} m / ${riseFeet.toFixed(2)} ft over ${runMeters.toFixed(2)} m)`;
+}
+
+function buildCrashNarrative(details) {
+  if (details.type === "landing") {
+    const lines = [];
+    const impactMph = details.impactVelocityMeters * METERS_PER_SECOND_TO_MPH;
+    const horizontalMph = details.horizontalVelocityMeters * METERS_PER_SECOND_TO_MPH;
+    const totalMph = details.totalVelocityMeters * METERS_PER_SECOND_TO_MPH;
+    const dropFeet = details.dropHeightMeters * METERS_TO_FEET;
+
+    lines.push(
+      `The car touched down at ${details.impactVelocityMeters.toFixed(1)} m/s (${impactMph.toFixed(1)} mph) downward after ${details.airborneSeconds.toFixed(2)} s aloft.`
+    );
+
+    if (details.impactVelocityMeters >= CAR_CRASH_THRESHOLD) {
+      lines.push(
+        `That exceeded the ${CAR_CRASH_THRESHOLD.toFixed(1)} m/s (${(CAR_CRASH_THRESHOLD * METERS_PER_SECOND_TO_MPH).toFixed(1)} mph) vertical crash limit.`
+      );
+    }
+
+    lines.push(
+      `Horizontal speed at impact was ${details.horizontalVelocityMeters.toFixed(1)} m/s (${horizontalMph.toFixed(1)} mph), giving a total touchdown speed of ${details.totalVelocityMeters.toFixed(1)} m/s (${totalMph.toFixed(1)} mph).`
+    );
+
+    if (details.severeTotal) {
+      const combinedThreshold = CAR_CRASH_THRESHOLD * 1.6;
+      lines.push(
+        `That overall speed rose past the ${combinedThreshold.toFixed(1)} m/s (${(combinedThreshold * METERS_PER_SECOND_TO_MPH).toFixed(1)} mph) combined-speed limit.`
+      );
+    }
+
+    if (details.dropInduced && details.dropHeightMeters > 0.05) {
+      lines.push(
+        `It fell roughly ${details.dropHeightMeters.toFixed(2)} m (${dropFeet.toFixed(2)} ft) before contact.`
+      );
+    }
+
+    if (Number.isFinite(details.effectiveFriction)) {
+      const slicknessPercent = Math.round((details.surfaceSlickness ?? 0) * 100);
+      const slicknessText = slicknessPercent > 0 ? ` with ${slicknessPercent}% slickness` : "";
+      lines.push(`Surface grip was μ≈${details.effectiveFriction.toFixed(2)}${slicknessText}.`);
+    }
+
+    const windMagnitude = Math.abs(details.windSpeed ?? 0);
+    if (windMagnitude > 0.1) {
+      lines.push(
+        `Wind was about ${windMagnitude.toFixed(1)} m/s (${(windMagnitude * METERS_PER_SECOND_TO_MPH).toFixed(1)} mph).`
+      );
+    }
+
+    const prefix = details.reason ? `${details.reason} — ` : "";
+    return prefix + lines.join(" ");
+  }
+
+  if (details.type === "slope") {
+    const slopeDegrees = details.slopeAngle * RAD_TO_DEG;
+    const thresholdDegrees = SLOPE_CRASH_ANGLE_RAD * RAD_TO_DEG;
+    const riseFeet = details.riseMeters * METERS_TO_FEET;
+    const runFeet = details.runMeters * METERS_TO_FEET;
+    const approachMph = details.approachSpeed * METERS_PER_SECOND_TO_MPH;
+    const normalMph = details.normalImpactVelocity * METERS_PER_SECOND_TO_MPH;
+
+    const lines = [
+      `The hill rose ${details.riseMeters.toFixed(2)} m (${riseFeet.toFixed(2)} ft) over ${details.runMeters.toFixed(2)} m (${runFeet.toFixed(2)} ft), creating a ${slopeDegrees.toFixed(1)}° slope beyond the ${thresholdDegrees.toFixed(1)}° limit.`,
+      `The car was still moving ${details.approachSpeed.toFixed(1)} m/s (${approachMph.toFixed(1)} mph), so its nose met the slope with about ${details.normalImpactVelocity.toFixed(1)} m/s (${normalMph.toFixed(1)} mph) of normal velocity.`
+    ];
+
+    if (Number.isFinite(details.effectiveFriction)) {
+      const slicknessPercent = Math.round((details.surfaceSlickness ?? 0) * 100);
+      const slicknessText = slicknessPercent > 0 ? ` and ${slicknessPercent}% slickness` : "";
+      lines.push(`Surface grip was μ≈${details.effectiveFriction.toFixed(2)}${slicknessText}.`);
+    }
+
+    const windMagnitude = Math.abs(details.windSpeed ?? 0);
+    if (windMagnitude > 0.1) {
+      lines.push(
+        `Wind was about ${windMagnitude.toFixed(1)} m/s (${(windMagnitude * METERS_PER_SECOND_TO_MPH).toFixed(1)} mph).`
+      );
+    }
+
+    return `Impacted steep slope — ${lines.join(" ")}`;
+  }
+
+  return "";
 }

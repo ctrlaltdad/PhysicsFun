@@ -91,12 +91,31 @@ export const landscapes = {
     },
     ground(x, time) {
       const amplitude = farmParameters.height;
-      const frequency = farmParameters.frequency;
-      const rolling = Math.sin((x + time * 25) / frequency) * amplitude;
-      const secondaryAmplitude = amplitude * 0.45;
-      const secondaryFrequency = Math.max(50, frequency * 0.5);
-      const layers = Math.sin((x - time * 40) / secondaryFrequency) * secondaryAmplitude;
-      return canvas.height * 0.74 + rolling + layers;
+      if (amplitude <= 0.0001) {
+        return canvas.height * 0.74;
+      }
+
+      const frequency = Math.max(20, farmParameters.frequency);
+      const seed = farmParameters.seed ?? 0;
+
+      const sampleScale = 1 / frequency;
+      const offset = (x + seed * 97.31) * sampleScale;
+      const amplitudeNoise = smoothNoise(seed, offset * 0.65);
+      const phaseNoise = smoothNoise(seed, offset * 1.32 + 14.7);
+      const layerNoise = smoothNoise(seed, offset * 1.9 + 31.4);
+
+      const primaryAmplitude = amplitude * (0.35 + amplitudeNoise * 0.65);
+      const primaryPhaseShift = phaseNoise * Math.PI * 2;
+      const rolling = Math.sin(((x + time * 25) / frequency) + primaryPhaseShift + seed * 0.001) * primaryAmplitude;
+
+      const secondaryBase = amplitude * 0.55;
+      const secondaryAmplitude = secondaryBase * (0.25 + layerNoise * 0.55);
+      const secondaryFrequency = Math.max(40, frequency * (0.42 + layerNoise * 0.4));
+      const secondaryPhaseShift = (layerNoise * Math.PI * 1.6) + seed * 0.0025;
+      const layers = Math.sin(((x - time * 40) / secondaryFrequency) + secondaryPhaseShift) * secondaryAmplitude;
+
+      const totalOffset = clamp(rolling + layers, -amplitude, amplitude);
+      return canvas.height * 0.74 + totalOffset;
     },
     drawDetails(time, worldX) {
       ctx.save();
@@ -117,3 +136,30 @@ export const landscapes = {
     }
   }
 };
+
+function pseudoRandom(seed, value) {
+  const x = Math.sin(value * 127.1 + seed * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function smoothNoise(seed, value) {
+  const base = Math.floor(value);
+  const next = base + 1;
+  const fraction = value - base;
+  const n0 = pseudoRandom(seed, base);
+  const n1 = pseudoRandom(seed, next);
+  const t = smoothstep(fraction);
+  return lerp(n0, n1, t);
+}
+
+function smoothstep(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}

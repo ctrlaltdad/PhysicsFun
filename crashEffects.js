@@ -1,11 +1,27 @@
 import { PIXELS_PER_METER } from "./constants.js";
 import { canvas } from "./canvasContext.js";
+import { controls } from "./controls.js";
 
 export const crashFragments = [];
 
-export function triggerCarCrash(state, player, impactVelocityMeters) {
+export function triggerCarCrash(state, player, impactVelocityMeters, diagnostics = null) {
   if (player.crashed || state.playerType !== "car") {
     return;
+  }
+
+  state.crashVectorSnapshot = {
+    vx: player.vx,
+    vy: player.vy,
+    appliedForceX: state.lastAppliedForceX,
+    dragForceX: state.dragForceX,
+    frictionForceX: state.frictionForceX,
+    netForceX: state.lastForceX,
+    timestamp: Date.now()
+  };
+  state.crashDiagnostics = diagnostics;
+  state.showVectors = true;
+  if (controls?.vectorToggle) {
+    controls.vectorToggle.checked = true;
   }
 
   player.crashed = true;
@@ -89,9 +105,30 @@ export function drawCrashIndicator(ctx, player, state) {
     return;
   }
   ctx.save();
-  ctx.fillStyle = "rgba(255, 64, 64, 0.85)";
-  ctx.font = "bold 26px sans-serif";
+  ctx.fillStyle = "rgba(255, 64, 64, 0.9)";
   ctx.textAlign = "center";
-  ctx.fillText("Crash!", player.x, player.y - player.height * 0.8);
+  ctx.font = "bold 28px sans-serif";
+  const baseY = player.y - player.height * 0.85;
+  ctx.fillText("Crash!", player.x, baseY);
+  const reason = state.crashDiagnostics?.reason;
+  if (reason) {
+    ctx.font = "16px sans-serif";
+    ctx.fillText(reason, player.x, baseY + 24);
+  }
+  const narrative = state.crashDiagnostics?.narrative;
+  if (narrative) {
+    const summary = extractNarrativeSummary(narrative);
+    if (summary) {
+      ctx.font = "14px sans-serif";
+      ctx.fillText(summary, player.x, baseY + 44);
+    }
+  }
   ctx.restore();
+}
+
+function extractNarrativeSummary(narrative) {
+  const text = String(narrative);
+  const withoutReason = text.includes(" — ") ? text.split(" — ")[1] : text;
+  const firstSentence = withoutReason.split(/[.!?]/).find((segment) => segment.trim().length > 0);
+  return firstSentence ? `${firstSentence.trim()}.` : "";
 }

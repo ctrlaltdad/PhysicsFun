@@ -3,7 +3,7 @@ import { controls } from "./controls.js";
 import { PIXELS_PER_METER, physicsDefaults } from "./constants.js";
 import { landscapes } from "./landscapes.js";
 import { players } from "./players.js";
-import { farmParameters, resetFarmParameters, setFarmFrequency, setFarmHeight } from "./farmParameters.js";
+import { farmParameters, resetFarmParameters, reseedFarm, setFarmFrequency, setFarmHeight } from "./farmParameters.js";
 import { createPlayer } from "./playerFactory.js";
 import { updatePhysics } from "./physics.js";
 import { renderScene } from "./rendering.js";
@@ -35,7 +35,10 @@ const state = {
     windSpeed: 0,
     rainSlickness: 0
   },
-  effectiveGroundFriction: physicsDefaults.friction
+  effectiveGroundFriction: physicsDefaults.friction,
+  showVectors: false,
+  crashVectorSnapshot: null,
+  crashDiagnostics: null
 };
 
 const unitState = {
@@ -58,6 +61,9 @@ controls.playerSelect.addEventListener("change", () => {
 controls.landscapeSelect.addEventListener("change", () => {
   state.landscapeType = controls.landscapeSelect.value;
   state.sceneTime = 0;
+  if (state.landscapeType === "farm") {
+    reseedFarm();
+  }
   applyLandscapeDefaults();
   updateFarmControlsVisibility();
   spawnPlayer();
@@ -104,11 +110,19 @@ controls.windSlider.addEventListener("input", (event) => {
   const value = parseFloat(event.target.value);
   applyWind(value, false);
   updateEquations(state, player);
+  renderScene(state, player);
 });
 
 controls.rainSlider.addEventListener("input", (event) => {
   const value = parseFloat(event.target.value);
   applyRain(value, false);
+  updateEquations(state, player);
+  renderScene(state, player);
+});
+
+controls.vectorToggle.addEventListener("change", (event) => {
+  state.showVectors = event.target.checked;
+  renderScene(state, player);
   updateEquations(state, player);
 });
 
@@ -213,8 +227,12 @@ function spawnPlayer() {
   player.vy = 0;
   player.onGround = false;
   player.crashed = false;
+  player.airTime = 0;
+  player.airborneStartY = groundY;
   state.carCrashTimer = 0;
   crashFragments.length = 0;
+  state.crashVectorSnapshot = null;
+  state.crashDiagnostics = null;
 }
 
 function setGravity(value, updateSlider = false) {
@@ -231,6 +249,7 @@ function setFriction(value, updateSlider = false) {
   if (updateSlider) {
     controls.frictionSlider.value = value.toFixed(2);
   }
+  recomputeEffectiveFriction();
 }
 
 function setAirResistance(value, updateSlider = false) {
@@ -278,6 +297,7 @@ function applyRain(percent, syncSlider = true) {
   if (syncSlider) {
     controls.rainSlider.value = clamped;
   }
+  recomputeEffectiveFriction();
 }
 
 function syncFarmControls() {
@@ -302,9 +322,15 @@ function initializeUI() {
   syncFarmControls();
   applyWind(state.weather.windSpeed, true);
   applyRain(state.weather.rainSlickness * 100, true);
+  controls.vectorToggle.checked = state.showVectors;
   updateFarmControlsVisibility();
   updateEquations(state, player);
   updateMetrics(state, player, unitState);
+}
+
+function recomputeEffectiveFriction() {
+  const rainMultiplier = 1 - state.weather.rainSlickness * 0.6;
+  state.effectiveGroundFriction = Math.max(0.05, state.groundFriction * rainMultiplier);
 }
 
 applyLandscapeDefaults();

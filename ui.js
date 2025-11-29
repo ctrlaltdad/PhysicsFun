@@ -1,4 +1,4 @@
-import { PIXELS_PER_METER } from "./constants.js";
+import { PIXELS_PER_METER, METERS_PER_SECOND_TO_MPH, NEWTON_TO_LBF } from "./constants.js";
 import { controls } from "./controls.js";
 import { landscapes } from "./landscapes.js";
 import { players } from "./players.js";
@@ -28,7 +28,19 @@ export function updateMetrics(state, player, unitState) {
   const heightAboveGround = Math.max(0, (groundY - (player.y + player.height / 2)) / PIXELS_PER_METER);
   controls.heightReadout.textContent = heightAboveGround.toFixed(2);
 
-  controls.forceReadout.textContent = state.lastForceX.toFixed(0);
+  const forceNewtons = state.lastForceX;
+  const forceLbf = forceNewtons * NEWTON_TO_LBF;
+  if (unitState.useImperial) {
+    controls.forceReadout.textContent = forceLbf.toFixed(1);
+    controls.forceUnit.textContent = "lbf";
+    controls.forceSecondaryReadout.textContent = forceNewtons.toFixed(0);
+    controls.forceSecondaryUnit.textContent = "N";
+  } else {
+    controls.forceReadout.textContent = forceNewtons.toFixed(0);
+    controls.forceUnit.textContent = "N";
+    controls.forceSecondaryReadout.textContent = forceLbf.toFixed(1);
+    controls.forceSecondaryUnit.textContent = "lbf";
+  }
   player.ax = 0;
   player.ay = 0;
 }
@@ -54,6 +66,13 @@ export function updateEquations(state, player) {
   const verticalAcceleration = -state.gravity - state.airResistance * vyMeters;
   const horizontalAcceleration = state.lastForceX / config.mass;
 
+  const formatForceLine = (label, value) => {
+    const forceLbfValue = value * NEWTON_TO_LBF;
+    return `${label} = ${value.toFixed(0)} N (${forceLbfValue.toFixed(0)} lbf)`;
+  };
+
+  const speedMph = speed * METERS_PER_SECOND_TO_MPH;
+
   const equations = [
     {
       title: "Vertical Motion",
@@ -72,9 +91,9 @@ export function updateEquations(state, player) {
       title: "Horizontal Motion",
       expression: horizontalExpression,
       details: [
-        `F_input = ${state.lastAppliedForceX.toFixed(0)} N`,
-        `F_drag ≈ ${state.dragForceX.toFixed(0)} N`,
-        `F_friction ≈ ${state.frictionForceX.toFixed(0)} N`,
+        formatForceLine("F_input", state.lastAppliedForceX),
+        formatForceLine("F_drag", state.dragForceX),
+        formatForceLine("F_friction", state.frictionForceX),
         `μ_eff = ${effectiveFriction.toFixed(2)} (wet surface factor)`,
         `v_x = ${vxMeters.toFixed(2)} m/s`,
         `a_x (current) = ${horizontalAcceleration.toFixed(2)} m/s^2`
@@ -85,7 +104,7 @@ export function updateEquations(state, player) {
       title: "Energy Snapshot",
       expression: energyExpression,
       details: [
-        `v = ${speed.toFixed(1)} m/s`,
+        `v = ${speed.toFixed(1)} m/s (${speedMph.toFixed(1)} mph)`,
         `E_k = ${kineticEnergy.toFixed(0)} J`,
         `p = ${momentum.toFixed(0)} kg*m/s`
       ],
@@ -101,11 +120,20 @@ export function updateEquations(state, player) {
           "Δp = F_net * Δt (impulse)",
           "W = F * d = ΔE_k"
         ];
-        lines.push(`Wind speed = ${state.weather.windSpeed.toFixed(1)} m/s`);
+        const windMph = state.weather.windSpeed * METERS_PER_SECOND_TO_MPH;
+        lines.push(`Wind speed = ${state.weather.windSpeed.toFixed(1)} m/s (${windMph.toFixed(1)} mph)`);
         const slicknessPercent = (state.weather.rainSlickness * 100).toFixed(0);
         lines.push(`Surface slickness = ${slicknessPercent}%`);
         if (player.crashed && state.playerType === "car") {
-          lines.unshift("Status: vehicle disabled after high-impact collision");
+          const crashReason = state.crashDiagnostics?.reason;
+          const crashNarrative = state.crashDiagnostics?.narrative;
+          const statusLabel = crashReason
+            ? `Status: vehicle disabled — ${crashReason}`
+            : "Status: vehicle disabled after high-impact collision";
+          lines.unshift(statusLabel);
+          if (crashNarrative) {
+            lines.unshift(`Crash explanation: ${stripNarrativeReason(crashNarrative)}`);
+          }
         }
         if (!player.onGround) {
           lines.push("Projectile: y(t) = y₀ + v_{y0} t - 0.5 * g * t²");
@@ -127,4 +155,12 @@ export function updateEquations(state, player) {
       </article>
     `;
   }).join("");
+}
+
+function stripNarrativeReason(narrative) {
+  const text = String(narrative).trim();
+  if (text.includes(" — ")) {
+    return text.split(" — ").slice(1).join(" — ").trim();
+  }
+  return text;
 }

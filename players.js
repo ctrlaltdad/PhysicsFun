@@ -1,3 +1,5 @@
+import { CAR_TOP_SPEED_MPS } from "./constants.js";
+
 export const players = {
   person: {
     label: "Person",
@@ -21,7 +23,7 @@ export const players = {
     color: "#2a9d8f",
     accent: "#1f6f63",
     moveForce: 4000,
-    maxSpeed: 67.06,
+    maxSpeed: CAR_TOP_SPEED_MPS,
     maxVerticalSpeed: 30,
     jumpVelocity: 0,
     restitution: 0.05,

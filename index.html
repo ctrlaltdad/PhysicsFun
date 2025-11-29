@@ -55,7 +55,7 @@
           <h3>Hilly Farm Terrain</h3>
           <label class="field" for="farmHeightSlider">
             <span>Hill Height (<span id="farmHeightValue">40</span> px)</span>
-            <input id="farmHeightSlider" type="range" min="10" max="120" step="2" value="40" />
+            <input id="farmHeightSlider" type="range" min="0" max="120" step="2" value="40" />
           </label>
           <label class="field" for="farmFrequencySlider">
             <span>Hill Frequency (<span id="farmFrequencyValue">180</span> m)</span>
@@ -72,6 +72,13 @@
           <label class="field" for="rainSlider">
             <span>Surface Slickness (<span id="rainValue">0</span>%)</span>
             <input id="rainSlider" type="range" min="0" max="100" step="5" value="0" />
+          </label>
+        </div>
+
+        <div class="vector-controls">
+          <label class="checkbox-field" for="vectorToggle">
+            <input id="vectorToggle" type="checkbox" />
+            <span>Show force &amp; velocity vectors</span>
           </label>
         </div>
 
@@ -95,7 +102,13 @@
             </label>
           </div>
           <div><strong>Height:</strong> <span id="heightReadout">0.0</span> m</div>
-          <div><strong>Horizontal Force:</strong> <span id="forceReadout">0.0</span> N</div>
+          <div>
+            <strong>Horizontal Force:</strong>
+            <span id="forceReadout">0.0</span>
+            <span id="forceUnit">N</span>
+            (<span id="forceSecondaryReadout">0.0</span>
+            <span id="forceSecondaryUnit">lbf</span>)
+          </div>
         </div>
         <div class="legend">
           <p><strong>Controls:</strong> Arrow keys or WASD to move, Space (or W/↑) to jump when playing as the person.</p>

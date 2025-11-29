@@ -20,6 +20,8 @@ export function createPlayer(type) {
     accent: config.accent,
     onGround: false,
     facing: 1,
-    crashed: false
+    crashed: false,
+    airTime: 0,
+    airborneStartY: null
   };
 }
