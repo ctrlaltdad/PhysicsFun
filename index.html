@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Physics Playground</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="title-block">
+        <h1>Physics Playground</h1>
+        <p>Experiment with motion by mixing players, landscapes, and forces.</p>
+      </div>
+      <button id="resetButton" class="reset-button" type="button">Reset Scene</button>
+    </header>
+
+    <main class="app-grid">
+      <section class="panel control-panel" aria-label="Simulation controls">
+        <h2>Scenario</h2>
+        <label class="field">
+          <span>Player</span>
+          <select id="playerSelect" aria-label="Choose the player">
+            <option value="person">Person</option>
+            <option value="car">Car</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Landscape</span>
+          <select id="landscapeSelect" aria-label="Choose the landscape">
+            <option value="beach">Sunny Beach</option>
+            <option value="racetrack">Race Track</option>
+            <option value="farm">Hilly Farm</option>
+          </select>
+        </label>
+
+        <h2>Physical Parameters</h2>
+        <label class="field" for="gravitySlider">
+          <span>Gravity (<span id="gravityValue">9.81</span> m/s²)</span>
+          <input id="gravitySlider" type="range" min="1" max="20" step="0.1" value="9.81" />
+        </label>
+
+        <label class="field" for="frictionSlider">
+          <span>Ground Friction (<span id="frictionValue">0.80</span>)</span>
+          <input id="frictionSlider" type="range" min="0" max="1" step="0.01" value="0.8" />
+        </label>
+
+        <label class="field" for="dragSlider">
+          <span>Air Resistance (<span id="dragValue">0.02</span>)</span>
+          <input id="dragSlider" type="range" min="0" max="0.2" step="0.005" value="0.02" />
+        </label>
+
+        <div class="panel-note">
+          Tip: Toggle between arrow keys or WASD to explore how the same force feels in different environments.
+        </div>
+      </section>
+
+      <section class="panel simulation-panel" aria-label="Simulation display">
+        <canvas id="playground" width="960" height="540" aria-label="Physics simulation canvas"></canvas>
+        <div class="metrics" aria-live="polite">
+          <div>
+            <strong>Speed:</strong>
+            <span id="speedReadout">0.0</span>
+            <span id="speedUnit">m/s</span>
+            (<span id="speedSecondaryReadout">0.0</span>
+            <span id="speedSecondaryUnit">km/h</span>)
+            <label class="toggle" for="speedUnitToggle">
+              <input id="speedUnitToggle" type="checkbox" aria-label="Toggle speed units between metric and imperial" />
+              <span class="toggle-label">mph</span>
+            </label>
+          </div>
+          <div><strong>Height:</strong> <span id="heightReadout">0.0</span> m</div>
+          <div><strong>Horizontal Force:</strong> <span id="forceReadout">0.0</span> N</div>
+        </div>
+        <div class="legend">
+          <p><strong>Controls:</strong> Arrow keys or WASD to move, Space (or W/↑) to jump when playing as the person.</p>
+          <p>The canvas illustrates motion using simplified physics. Adjust parameters to see gravity, drag, and friction reshape the experience in real time.</p>
+        </div>
+      </section>
+
+      <aside class="panel equation-panel" aria-label="Physics equations">
+        <h2>Key Equations</h2>
+        <div id="equations" class="equations"></div>
+      </aside>
+    </main>
+
+    <footer class="app-footer">
+      Built for experimentation: tweak the numbers, swap terrains, and feel the difference.
+    </footer>
+
+    <script src="script.js" defer></script>
+  </body>
+</html>
