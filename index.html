@@ -63,6 +63,18 @@
           </label>
         </div>
 
+        <div class="weather-controls">
+          <h3>Weather Conditions</h3>
+          <label class="field" for="windSlider">
+            <span>Wind Speed (<span id="windValue">0</span> m/s)</span>
+            <input id="windSlider" type="range" min="-15" max="15" step="0.5" value="0" />
+          </label>
+          <label class="field" for="rainSlider">
+            <span>Surface Slickness (<span id="rainValue">0</span>%)</span>
+            <input id="rainSlider" type="range" min="0" max="100" step="5" value="0" />
+          </label>
+        </div>
+
         <div class="panel-note">
           Tip: Toggle between arrow keys or WASD to explore how the same force feels in different environments.
         </div>
@@ -101,6 +113,6 @@
       Built for experimentation: tweak the numbers, swap terrains, and feel the difference.
     </footer>
 
-    <script src="script.js" defer></script>
+    <script type="module" src="main.js"></script>
   </body>
 </html>

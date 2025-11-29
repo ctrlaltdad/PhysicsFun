@@ -186,6 +186,23 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.02em;
 }
 
+.weather-controls {
+  margin-top: 0.5rem;
+  padding: 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 0.9rem;
+}
+
+.weather-controls h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
 .simulation-panel {
   gap: 1.1rem;
 }
