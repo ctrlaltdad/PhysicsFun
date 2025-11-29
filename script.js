@@ -3,10 +3,21 @@
   const ctx = canvas.getContext("2d");
 
   const PIXELS_PER_METER = 35;
+  const CAR_CRASH_THRESHOLD = 12; // meters per second; above this counts as a crash
   const defaults = {
     gravity: 9.81,
     friction: 0.8,
     airResistance: 0.02
+  };
+
+  const farmDefaults = {
+    height: 40,
+    frequency: 180
+  };
+
+  const farmParameters = {
+    height: farmDefaults.height,
+    frequency: farmDefaults.frequency
   };
 
   const players = {
@@ -32,8 +43,8 @@
       color: "#2a9d8f",
       accent: "#1f6f63",
       moveForce: 4000,
-      maxSpeed: 26,
-      maxVerticalSpeed: 10,
+      maxSpeed: 67.06,
+      maxVerticalSpeed: 30,
       jumpVelocity: 0,
       restitution: 0.05,
       activeFrictionScale: 0.08
@@ -124,13 +135,17 @@
       palette: {
         skyTop: "#ffecd2",
         skyBottom: "#fcb69f",
-        ground: "#8ec07c",
-        groundShadow: "#5f9560",
+        ground: "#6fcb4c",
+        groundShadow: "#4e8432",
         overlay: "#f77f00"
       },
       ground(x, time) {
-        const rolling = Math.sin((x + time * 25) / 180) * 40;
-        const layers = Math.sin((x - time * 40) / 90) * 18;
+        const amplitude = farmParameters.height;
+        const frequency = farmParameters.frequency;
+        const rolling = Math.sin((x + time * 25) / frequency) * amplitude;
+        const secondaryAmplitude = amplitude * 0.45;
+        const secondaryFrequency = Math.max(50, frequency * 0.5);
+        const layers = Math.sin((x - time * 40) / secondaryFrequency) * secondaryAmplitude;
         return canvas.height * 0.74 + rolling + layers;
       },
       drawDetails(time, worldX) {
@@ -167,6 +182,11 @@
     speedSecondaryReadout: document.getElementById("speedSecondaryReadout"),
     speedSecondaryUnit: document.getElementById("speedSecondaryUnit"),
     speedToggle: document.getElementById("speedUnitToggle"),
+    farmControls: document.getElementById("farmControls"),
+    farmHeightSlider: document.getElementById("farmHeightSlider"),
+    farmHeightValue: document.getElementById("farmHeightValue"),
+    farmFrequencySlider: document.getElementById("farmFrequencySlider"),
+    farmFrequencyValue: document.getElementById("farmFrequencyValue"),
     heightReadout: document.getElementById("heightReadout"),
     forceReadout: document.getElementById("forceReadout"),
     equations: document.getElementById("equations"),
@@ -190,17 +210,20 @@
       right: false,
       jumpQueued: false
     },
-    equationTimer: 0
+    equationTimer: 0,
+    carCrashTimer: 0
   };
 
   const unitState = {
     useImperial: false
   };
 
-    controls.speedToggle.addEventListener("change", (event) => {
-      unitState.useImperial = event.target.checked;
-      updateMetrics();
-    });
+  const crashFragments = [];
+
+  controls.speedToggle.addEventListener("change", (event) => {
+    unitState.useImperial = event.target.checked;
+    updateMetrics();
+  });
 
   let player = createPlayer(state.playerType);
 
@@ -222,7 +245,8 @@
       color: config.color,
       accent: config.accent,
       onGround: false,
-      facing: 1
+      facing: 1,
+      crashed: false
     };
   }
 
@@ -238,6 +262,9 @@
     player.vx = 0;
     player.vy = 0;
     player.onGround = false;
+    player.crashed = false;
+    state.carCrashTimer = 0;
+    crashFragments.length = 0;
   }
 
   function setGravity(value, updateSlider = false) {
@@ -264,6 +291,104 @@
     }
   }
 
+  function setFarmHeight(value, updateSlider = false) {
+    farmParameters.height = value;
+    controls.farmHeightValue.textContent = Math.round(value);
+    if (updateSlider) {
+      controls.farmHeightSlider.value = value;
+    }
+  }
+
+  function setFarmFrequency(value, updateSlider = false) {
+    farmParameters.frequency = value;
+    controls.farmFrequencyValue.textContent = Math.round(value);
+    if (updateSlider) {
+      controls.farmFrequencySlider.value = value;
+    }
+  }
+
+  function syncFarmControls() {
+    setFarmHeight(farmParameters.height, true);
+    setFarmFrequency(farmParameters.frequency, true);
+  }
+
+  function updateFarmControlsVisibility() {
+    const showFarmControls = state.landscapeType === "farm";
+    controls.farmControls.hidden = !showFarmControls;
+    if (showFarmControls) {
+      syncFarmControls();
+    }
+  }
+
+  function resetFarmParameters(forceSync = false) {
+    setFarmHeight(farmDefaults.height, forceSync);
+    setFarmFrequency(farmDefaults.frequency, forceSync);
+  }
+
+  function triggerCarCrash(impactVelocityMeters) {
+    if (player.crashed || state.playerType !== "car") {
+      return;
+    }
+    player.crashed = true;
+    state.carCrashTimer = 0;
+    state.input.left = false;
+    state.input.right = false;
+    state.input.jumpQueued = false;
+    player.vx = 0;
+    player.vy = 0;
+    state.lastForceX = 0;
+    state.lastAppliedForceX = 0;
+    state.dragForceX = 0;
+    state.frictionForceX = 0;
+    crashFragments.length = 0;
+
+    const fragmentCount = 9;
+    const baseSpeed = impactVelocityMeters * PIXELS_PER_METER;
+    for (let i = 0; i < fragmentCount; i += 1) {
+      const angle = (-Math.PI / 3) + Math.random() * (Math.PI * 0.6);
+      const magnitude = baseSpeed * (0.15 + Math.random() * 0.35);
+      crashFragments.push({
+        x: player.x + (Math.random() - 0.5) * player.width * 0.6,
+        y: player.y + player.height * 0.1,
+        vx: Math.cos(angle) * magnitude,
+        vy: -Math.abs(Math.sin(angle)) * magnitude,
+        life: 1.2 + Math.random() * 0.5
+      });
+    }
+  }
+
+  function updateCrashFragments(landscape, dt) {
+    if (crashFragments.length === 0) {
+      return;
+    }
+
+    const gravityPixels = state.gravity * PIXELS_PER_METER;
+    const centerX = canvas.width * 0.5;
+    for (let i = crashFragments.length - 1; i >= 0; i -= 1) {
+      const fragment = crashFragments[i];
+      fragment.vy += gravityPixels * dt * 0.8;
+      fragment.vx *= 0.99;
+      fragment.x += fragment.vx * dt;
+      fragment.y += fragment.vy * dt;
+      fragment.life -= dt;
+
+      const worldSampleX = state.worldX + (fragment.x - centerX);
+      const groundY = landscape.ground(worldSampleX, state.sceneTime);
+      if (fragment.y >= groundY) {
+        fragment.y = groundY;
+        fragment.vy *= -0.35;
+        fragment.vx *= 0.6;
+        if (Math.abs(fragment.vy) < 30) {
+          fragment.vy = 0;
+        }
+      }
+
+      if (fragment.life <= 0) {
+        crashFragments.splice(i, 1);
+      }
+    }
+  }
+
   function applyLandscapeDefaults() {
     const landscape = landscapes[state.landscapeType];
     setFriction(landscape.baseFriction, true);
@@ -280,6 +405,7 @@
     state.landscapeType = controls.landscapeSelect.value;
     state.sceneTime = 0;
     applyLandscapeDefaults();
+    updateFarmControlsVisibility();
     spawnPlayer();
     updateEquations();
   });
@@ -302,9 +428,28 @@
     updateEquations();
   });
 
+  controls.farmHeightSlider.addEventListener("input", (event) => {
+    const value = parseFloat(event.target.value);
+    setFarmHeight(value);
+    if (state.landscapeType === "farm") {
+      renderScene();
+      updateEquations();
+    }
+  });
+
+  controls.farmFrequencySlider.addEventListener("input", (event) => {
+    const value = parseFloat(event.target.value);
+    setFarmFrequency(value);
+    if (state.landscapeType === "farm") {
+      renderScene();
+      updateEquations();
+    }
+  });
+
   controls.resetButton.addEventListener("click", () => {
     applyLandscapeDefaults();
     setGravity(defaults.gravity, true);
+    resetFarmParameters(state.landscapeType === "farm");
     state.sceneTime = 0;
     spawnPlayer();
     updateEquations();
@@ -357,6 +502,11 @@
     const dt = Math.min((timestamp - lastTimestamp) / 1000, 0.066);
     lastTimestamp = timestamp;
     updatePhysics(dt);
+    const landscape = landscapes[state.landscapeType];
+    updateCrashFragments(landscape, dt);
+    if (player.crashed) {
+      state.carCrashTimer += dt;
+    }
     const speedMeters = Math.sqrt(player.vx * player.vx + player.vy * player.vy) / PIXELS_PER_METER;
     const inputsActive = state.input.left || state.input.right;
     if (inputsActive || speedMeters > 0.1) {
@@ -398,7 +548,8 @@
     player.x = centerX;
 
     clampBounds(config);
-    resolveGroundCollision(config, landscape);
+    const wasOnGround = player.onGround;
+    resolveGroundCollision(config, landscape, wasOnGround);
     applyGroundFriction(config, dt);
 
     state.lastAppliedForceX = appliedForceX;
@@ -407,6 +558,10 @@
   }
 
   function applyControls(config) {
+    if (player.crashed) {
+      state.input.jumpQueued = false;
+      return 0;
+    }
     let totalForceX = 0;
 
     if (state.input.left) {
@@ -442,7 +597,7 @@
   }
 
   function applyGroundFriction(config, dt) {
-    if (!player.onGround) {
+    if (!player.onGround || player.crashed) {
       state.frictionForceX = 0;
       return;
     }
@@ -501,14 +656,29 @@
     }
   }
 
-  function resolveGroundCollision(config, landscape) {
+  function resolveGroundCollision(config, landscape, wasOnGround) {
     const groundY = landscape.ground(state.worldX, state.sceneTime);
     const halfHeight = player.height / 2;
     if (player.y + halfHeight >= groundY) {
       player.y = groundY - halfHeight;
       if (player.vy > 0) {
-        player.vy *= -config.restitution;
-        if (Math.abs(player.vy) < 5) {
+        const impactVelocityMeters = Math.abs(player.vy) / PIXELS_PER_METER;
+        const totalVelocityMeters = Math.sqrt(player.vx * player.vx + player.vy * player.vy) / PIXELS_PER_METER;
+        const landingImpact = !wasOnGround;
+        if (landingImpact && state.playerType === "car" && !player.crashed) {
+          const severeVertical = impactVelocityMeters > CAR_CRASH_THRESHOLD;
+          const severeTotal = totalVelocityMeters > CAR_CRASH_THRESHOLD * 1.5 && impactVelocityMeters > 2;
+          if (severeVertical || severeTotal) {
+            const crashSeverity = Math.max(impactVelocityMeters, totalVelocityMeters * 0.35);
+            triggerCarCrash(crashSeverity);
+          }
+        }
+        if (!player.crashed) {
+          player.vy *= -config.restitution;
+          if (Math.abs(player.vy) < 5) {
+            player.vy = 0;
+          }
+        } else {
           player.vy = 0;
         }
       }
@@ -527,6 +697,8 @@
     }
     drawShadow();
     drawPlayer();
+    drawCrashFragments();
+    drawCrashIndicator();
   }
 
   function drawBackground(landscape) {
@@ -631,34 +803,45 @@
     const width = player.width;
     const height = player.height * 0.6;
     const baseY = player.y + height * 0.4;
+    const crashTilt = player.crashed ? (player.facing >= 0 ? -Math.PI / 7 : Math.PI / 7) : 0;
     ctx.save();
+    ctx.translate(player.x, baseY);
+    if (player.crashed) {
+      ctx.rotate(crashTilt);
+    }
+    ctx.translate(-width / 2, -height);
 
-    ctx.fillStyle = config.color;
-    drawRoundedRect(
-      ctx,
-      player.x - width / 2,
-      baseY - height,
-      width,
-      height,
-      height * 0.2
-    );
+    ctx.fillStyle = player.crashed ? shadeColor(config.color, -18) : config.color;
+    drawRoundedRect(ctx, 0, 0, width, height, height * 0.2);
 
-    ctx.fillStyle = config.accent;
-    ctx.fillRect(player.x - width / 4, baseY - height * 1.25, width / 2, height * 0.45);
+    ctx.fillStyle = player.crashed ? shadeColor(config.accent, -24) : config.accent;
+    ctx.fillRect(width * 0.25, -height * 0.25, width * 0.5, height * 0.45);
 
     ctx.fillStyle = "#1b1b1d";
     const wheelRadius = height * 0.35;
     const wheelYOffset = wheelRadius;
     ctx.beginPath();
-    ctx.arc(player.x - width * 0.3, baseY + wheelYOffset, wheelRadius, 0, Math.PI * 2);
-    ctx.arc(player.x + width * 0.3, baseY + wheelYOffset, wheelRadius, 0, Math.PI * 2);
+    ctx.arc(width * 0.2, height + wheelYOffset, wheelRadius, 0, Math.PI * 2);
+    ctx.arc(width * 0.8, height + wheelYOffset, wheelRadius, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = "#f0f0f0";
     ctx.beginPath();
-    ctx.arc(player.x - width * 0.3, baseY + wheelYOffset, wheelRadius * 0.45, 0, Math.PI * 2);
-    ctx.arc(player.x + width * 0.3, baseY + wheelYOffset, wheelRadius * 0.45, 0, Math.PI * 2);
+    ctx.arc(width * 0.2, height + wheelYOffset, wheelRadius * 0.45, 0, Math.PI * 2);
+    ctx.arc(width * 0.8, height + wheelYOffset, wheelRadius * 0.45, 0, Math.PI * 2);
     ctx.fill();
+
+    if (player.crashed) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(width * 0.1, height * 0.4);
+      ctx.lineTo(width * 0.45, height * 0.65);
+      ctx.moveTo(width * 0.55, height * 0.2);
+      ctx.lineTo(width * 0.9, height * 0.45);
+      ctx.stroke();
+    }
+
     ctx.restore();
   }
 
@@ -675,6 +858,43 @@
     context.quadraticCurveTo(x, y, x + r, y);
     context.closePath();
     context.fill();
+  }
+
+  function shadeColor(hex, percent) {
+    const value = Math.max(-100, Math.min(100, percent));
+    const amount = Math.round(2.55 * value);
+    const num = parseInt(hex.slice(1), 16);
+    const r = Math.min(255, Math.max(0, (num >> 16) + amount));
+    const g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + amount));
+    const b = Math.min(255, Math.max(0, (num & 0xff) + amount));
+    return `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
+  }
+
+  function drawCrashFragments() {
+    if (crashFragments.length === 0) {
+      return;
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    crashFragments.forEach((fragment) => {
+      const alpha = Math.max(0, Math.min(1, fragment.life));
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = "#ffd166";
+      ctx.fillRect(fragment.x - 3, fragment.y - 3, 6, 6);
+    });
+    ctx.restore();
+  }
+
+  function drawCrashIndicator() {
+    if (!player.crashed || state.carCrashTimer > 4) {
+      return;
+    }
+    ctx.save();
+    ctx.fillStyle = "rgba(255, 64, 64, 0.85)";
+    ctx.font = "bold 26px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Crash!", player.x, player.y - player.height * 0.8);
+    ctx.restore();
   }
 
   function updateMetrics() {
@@ -763,6 +983,26 @@
           `p = ${momentum.toFixed(0)} kg*m/s`
         ],
         modified: speed > 0.5
+      },
+      {
+        title: "Supporting Relations",
+        expression: "F_drag = 0.5 * ρ * C_d * A * v^2",
+        details: (() => {
+          const lines = [
+            "ρ ≈ 1.225 kg/m³ at sea level",
+            "F_friction = μ * N, where N = m * g",
+            "Δp = F_net * Δt (impulse)",
+            "W = F * d = ΔE_k"
+          ];
+          if (player.crashed && state.playerType === "car") {
+            lines.unshift("Status: vehicle disabled after high-impact collision");
+          }
+          if (!player.onGround) {
+            lines.push("Projectile: y(t) = y₀ + v_{y0} t - 0.5 * g * t²");
+          }
+          return lines;
+        })(),
+        modified: true
       }
     ];
 
@@ -779,6 +1019,8 @@
     }).join("");
   }
 
+  syncFarmControls();
+  updateFarmControlsVisibility();
   applyLandscapeDefaults();
   spawnPlayer();
   updateEquations();

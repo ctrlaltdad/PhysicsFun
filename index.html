@@ -51,6 +51,18 @@
           <input id="dragSlider" type="range" min="0" max="0.2" step="0.005" value="0.02" />
         </label>
 
+        <div id="farmControls" class="conditional-controls" hidden>
+          <h3>Hilly Farm Terrain</h3>
+          <label class="field" for="farmHeightSlider">
+            <span>Hill Height (<span id="farmHeightValue">40</span> px)</span>
+            <input id="farmHeightSlider" type="range" min="10" max="120" step="2" value="40" />
+          </label>
+          <label class="field" for="farmFrequencySlider">
+            <span>Hill Frequency (<span id="farmFrequencyValue">180</span> m)</span>
+            <input id="farmFrequencySlider" type="range" min="60" max="360" step="10" value="180" />
+          </label>
+        </div>
+
         <div class="panel-note">
           Tip: Toggle between arrow keys or WASD to explore how the same force feels in different environments.
         </div>
